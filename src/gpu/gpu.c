@@ -1911,6 +1911,7 @@ b32 create_graphics_pipeline(
     const VkFormat*  color_formats, 
     u32              color_formats_count, 
     VkFormat         depth_format,
+    u32              ms_count,
     GpuPipeline*     gpu_pipeline
 ) {
     /* create pipeline */
@@ -1982,7 +1983,7 @@ b32 create_graphics_pipeline(
     const VkPipelineMultisampleStateCreateInfo multisample_state = (VkPipelineMultisampleStateCreateInfo) {
         .sType                 = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .sampleShadingEnable   = FALSE,
-        .rasterizationSamples  = VK_SAMPLE_COUNT_1_BIT,
+        .rasterizationSamples  = ms_count == 0 ? 1 : ms_count,
         .minSampleShading      = 1.0f,
         .pSampleMask           = NULL,
         .alphaToCoverageEnable = FALSE,
@@ -2126,6 +2127,7 @@ b32 create_pipelines(const GpuVulkanDevice* vulkan_device, const GpuPersistentRe
             u32      color_formats_count                = pipelines_infos[i].color_formats_count;
             VkFormat color_formats[GPU_MAX_ATTACHMENTS] = {0};
             VkFormat depth_format                       = VK_FORMAT_UNDEFINED;
+            u32      ms_count                           = pipelines_infos[i].ms_count;
 
             /* convert formats */ {
                 if(color_formats_count > GPU_MAX_ATTACHMENTS) {
@@ -2148,6 +2150,7 @@ b32 create_pipelines(const GpuVulkanDevice* vulkan_device, const GpuPersistentRe
                 color_formats, 
                 color_formats_count, 
                 depth_format,
+                ms_count,
                 &pipelines[i]
             )) {
                 LOG_ERROR("failed to create graphics pipeline id: %u", i);
@@ -2445,6 +2448,7 @@ GpuImageHandle gpu_add_image(GpuContext* context, const GpuImageInfo* image_info
     const u32           image_width     = image_info->width;
     const u32           image_height    = image_info->height;
     const u32           image_mip_count = image_info->mip_count;
+    const u32           image_ms_count  = image_info->ms_count;
 
     VkImage            image        = NULL;
     VkImageAspectFlags image_aspect = VK_IMAGE_ASPECT_NONE;
@@ -2474,7 +2478,7 @@ GpuImageHandle gpu_add_image(GpuContext* context, const GpuImageInfo* image_info
             .extent      = {image_width, image_height, 1},
             .arrayLayers = 1,
             .mipLevels   = image_mip_count,
-            .samples     = VK_SAMPLE_COUNT_1_BIT,
+            .samples     = image_ms_count == 0 ? 1 : image_ms_count,
             .tiling      = VK_IMAGE_TILING_OPTIMAL
         };
 

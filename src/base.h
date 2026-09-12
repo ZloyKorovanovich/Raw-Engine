@@ -24,6 +24,8 @@ typedef double             f64;
 #define U32_MAX (0xFFFFFFFF)
 #define U64_MAX (0xFFFFFFFFFFFFFFFFllu)
 
+#define I32_MAX (2147483647)
+
 #define KB (1024llu)
 #define MB (1024llu * 1024)
 #define GB (1024llu * 1024 * 1024)

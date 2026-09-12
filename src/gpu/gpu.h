@@ -91,6 +91,7 @@ typedef struct {
             const GpuFormat*  color_formats;
             GpuFormat         depth_format;
             u32               color_formats_count;
+            u32               ms_count;
         };
         struct {
             const char* compute_shader;
@@ -104,6 +105,7 @@ typedef struct {
     u32           width;
     u32           height;
     u32           mip_count;
+    u32           ms_count;
 } GpuImageInfo;
 
 typedef struct GpuContext GpuContext;

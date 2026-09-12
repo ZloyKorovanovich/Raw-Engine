@@ -2,7 +2,7 @@
 
 struct PushConstants {
     uint src_image_id;
-    uint sampler_id;
+    uint ms_count;
 };
 
 struct Interpolators {
@@ -20,7 +20,14 @@ Interpolators vs_main(uint vertex_id : SV_VertexId) {
 }
 
 float4 fs_main(Interpolators input) : SV_Target0 {
-    uint image_id   = push_constants.src_image_id;
-    uint sampler_id = push_constants.sampler_id;
-    return sampled_images[image_id].SampleLevel(samplers[sampler_id], input.screen_uv.xy, 0).rgba;
+    Texture2DMS<float4> src = sampled_images_float_ms[push_constants.src_image_id];
+
+    int2 pixel = int2(input.position_cs.xy);
+
+    float4 accum = 0.0;
+    for (uint s = 0; s < push_constants.ms_count; ++s) {
+        accum += src.Load(pixel, s);
+    }
+
+    return accum / float(push_constants.ms_count);
 }

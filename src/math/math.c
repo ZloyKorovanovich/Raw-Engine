@@ -142,7 +142,6 @@ Vec3 vec3_cross(Vec3 a, Vec3 b) {
         a.x * b.y - a.y * b.x
     };
 }
-
 Vec4 quat_mul_quat(Vec4 a, Vec4 b) {
     return (Vec4) {
         .x = a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -151,7 +150,6 @@ Vec4 quat_mul_quat(Vec4 a, Vec4 b) {
         .w = a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
     };
 }
-
 Vec3 quat_mul_vec3(Vec4 a, Vec3 b) {
     Vec3 q = { a.x, a.y, a.z };
 

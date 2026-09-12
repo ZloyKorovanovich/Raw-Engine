@@ -29,6 +29,10 @@ static Mat4x4 camera_iv   = {
 };
 
 void update_camera(void) {
+    if(input.action_0) {
+        camera_pos = (Vec3){0.0, 0.0, 0.0};
+    }
+
     /* hide cursor on rotate*/
     static b32 cursor_shown = TRUE;
     if(input.action_1 && cursor_shown) {
@@ -70,64 +74,119 @@ void update_camera(void) {
     camera_iv = mat4x4_mul_mat4x4(camera_iv, mat4x4_translation(camera_pos));
     camera_iv = mat4x4_mul_mat4x4(camera_iv, mat4x4_rotation(camera_rot));
     camera_vp = mat4x4_inverse(camera_iv);
-    camera_vp = mat4x4_mul_mat4x4(mat4x4_projection(120.0f * (f32)DEG_2_RAD, 16.0f / 9.0f, 0.03f, 3000.0f), camera_vp);
+    camera_vp = mat4x4_mul_mat4x4(mat4x4_projection(80.0f * (f32)DEG_2_RAD, 16.0f / 9.0f, 0.03f, 3000.0f), camera_vp);
 }
 
-/* === static scene === */
-/* FIX: remake (not static anymore) */
+/* === entity pool === */
 
-static u32     static_props_count = 0;
-static Entity* static_props       = NULL;
+#define INVALID_ENTITY_ID (0llu)
 
-b32 start_static_scene(void) {
-    /* allocate arrays */ {
-        static_props_count = 100;
-        static_props       = calloc(static_props_count, sizeof(Entity));
-        if(static_props == NULL) {
-            LOG_ERROR("failed to allocate static props");
+static u64 global_entity_id = 1;
+
+static u32     entity_pool_free_slots_count = 0;
+static u32     entity_pool_capacity         = 0;
+static u32*    entity_pool_free_slots       = NULL;
+static Entity* entity_pool                  = NULL;
+
+/* just zeroed entity with id set */
+Entity* entity_create(void) {
+    /* reallocate pool */
+    if(entity_pool_free_slots_count == 0) {
+        u32     new_capacity   = entity_pool_capacity + 1024;
+        u32     new_free_count = new_capacity - entity_pool_capacity;
+        u32*    new_free_slots = realloc(entity_pool_free_slots, new_capacity * sizeof(u32));
+        Entity* new_pool       = realloc(entity_pool, new_capacity * sizeof(Entity));
+
+        if(new_pool == NULL || new_free_slots == NULL) {
+            LOG_ERROR("failed to reallocate entity pool");
+            entity_pool_free_slots = new_free_slots == NULL ? entity_pool_free_slots : new_free_slots;
+            entity_pool            = new_pool       == NULL ? entity_pool            : new_pool;
             goto fail;
         }
+
+        for(u32 i = 0; i != new_free_count; i++) {
+            new_free_slots[i] = i + entity_pool_capacity;
+        }
+
+        entity_pool_free_slots_count = new_free_count;
+        entity_pool_free_slots       = new_free_slots;
+        entity_pool_capacity         = new_capacity;
+        entity_pool                  = new_pool;
     }
 
-    /* initialize props */ {
-        for(u32 i = 0; i != static_props_count; i++) {
-            static_props[i] = (Entity) {
-                .name      = "static_prop_",
-                .mesh_name = "./out/data/models/sphere.glb",
-                .entity_id = i,
-                .position  = {1.0f + (f32)i, 0.0, 0.0},
-                .scale     = {1.0, 1.0, 1.0},
-                .rotation  = {0.0, 0.0, 0.0, 1.0}
-            };
+    u32     slot_id = entity_pool_free_slots[entity_pool_free_slots_count - 1];
+    Entity* entity  = &entity_pool[slot_id];
+    entity_pool_free_slots_count--;
+    
+    *entity = (Entity) {
+        .entity_id = __atomic_fetch_add(&global_entity_id, 1, __ATOMIC_SEQ_CST)
+    };
 
-            char num_buffer[4] = {0};
-            snprintf(num_buffer, sizeof(num_buffer), "%u", i);
-            strcat_s(static_props[i].name, PATH_LENGTH, num_buffer);
+    return entity;
 
-            graphics_default_materials_add(&static_props[i]);
+    fail: {
+        return NULL;
+    }
+}
+
+void entity_destroy(Entity* entity) {
+    u32 entity_index = (u32)(((u64)entity - (u64)entity_pool) / sizeof(Entity));
+    if(entity_index >= entity_pool_capacity) {
+        LOG_ERROR("trying to destroy entity that does not belong to pool");
+        goto fail;
+    }
+    if(entity_pool[entity_index].entity_id == INVALID_ENTITY_ID) {
+        LOG_ERROR("trying to destroy entity that is already free");
+        goto fail;
+    }
+
+    entity_pool[entity_index] = (Entity){0};
+    entity_pool_free_slots[entity_pool_free_slots_count] = entity_index;
+    entity_pool_free_slots_count++;
+
+    fail: {}
+}
+
+void entity_pool_free(void) {
+    free(entity_pool_free_slots);
+    free(entity_pool);
+    entity_pool_free_slots_count = 0;
+    entity_pool_capacity         = 0;
+    entity_pool_free_slots       = NULL;
+    entity_pool                  = NULL;
+}
+
+
+b32 start(void) {
+    for(u32 i = 0; i != 10; i++) {
+        char number[32] = {0};
+        sprintf_s(number, 32, "%u", i);
+
+        Entity* new_entity = entity_create();
+        if(new_entity == NULL) {
+            LOG_ERROR("failed to create entity");
+            goto fail;
         }
+
+        f32 angle = (f32)rand() / (f32)RAND_MAX * 2.0f * (f32)PI; // [0, 2π)
+        f32 half  = angle * 0.5f;
+
+        strcpy_s(new_entity->name, PATH_LENGTH, "bull_shark_");
+        strcat_s(new_entity->name, PATH_LENGTH, number);
+        strcat_s(new_entity->mesh_name, PATH_LENGTH, "./out/data/models/bull_shark.glb");
+        new_entity->position = (Vec3){(f32)(rand() % 10), (f32)(rand() % 10), (f32)(rand() % 10)};
+        new_entity->rotation = (Vec4){ 0.0f, sinf(half), 0.0f, cosf(half) };
+        new_entity->scale    = 1.0;
+
+        graphics_default_materials_add(new_entity);
+
+        LOG_MESSAGE("added entity id: %llu name: \"%s\"", new_entity->entity_id, new_entity->name);
     }
 
     return TRUE;
 
     fail: {
         return FALSE;
-        free(static_props);
-        static_props_count = 0;
-        static_props       = NULL;
-    }
-}
-
-void finish_static_scene(void) {
-    free(static_props);
-    static_props_count = 0;
-    static_props       = NULL;
-}
-
-void update_props(void) {
-    for(u32 i = 0; i != static_props_count; i++) {
-        static_props[i].position.y = sinf((f32)input.time + (f32)i);
-        static_props[i].is_updated = TRUE;
     }
 }
 
@@ -142,14 +201,16 @@ b32 game_run(b32 is_debug) {
     }
 
     /* start */
-    start_static_scene();
+    if(!start()) {
+        LOG_ERROR("start failed");
+        goto fail;
+    }
 
     while(!input_process_window_should_close()) {
         input_gather_input(&input);
 
         /* update */
         update_camera();
-        update_props();
 
         if(!graphics_render_frame(camera_vp, camera_iv)) {
             LOG_ERROR("failed to render frame");
@@ -158,7 +219,7 @@ b32 game_run(b32 is_debug) {
     }
 
     /* finish */
-    finish_static_scene();
+    entity_pool_free();
 
     return TRUE;
 

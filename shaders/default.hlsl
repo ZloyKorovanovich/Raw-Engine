@@ -51,5 +51,5 @@ Interpolators vs_main(uint vertex_id : SV_VertexId) {
 float4 fs_main(Interpolators input) : SV_Target0 {
     vk::BufferPointer<UniformBuffer> uniform_buffer = vk::BufferPointer<UniformBuffer>(push_constants.uniform_address);
     float3 normal_ws = normalize(input.normal_ws.xyz);
-    return float4(0.0, 1.0, 1.0, 1.0) * saturate(dot(normal_ws, uniform_buffer.Get().sun_dir.xyz));
+    return float4(0.0, 1.0, 1.0, 1.0) * (1.0 + dot(normal_ws, uniform_buffer.Get().sun_dir.xyz)) * 0.5;
 }

@@ -8,8 +8,8 @@ typedef struct {
     char mesh_name[PATH_LENGTH];
     u64  entity_id;
     b32  is_updated;
+    f32  scale;
     Vec3 position;
-    Vec3 scale;
     Vec4 rotation;
 } Entity;
 

@@ -64,18 +64,20 @@ b32 resize_screen_textures(void) {
 
     /* images config */
     const GpuImageInfo screen_color_info = {
-        .flags     = GPU_IMAGE_FLAG_COLOR_ATTACHMENT | GPU_IMAGE_FLAG_SAMPLED | GPU_IMAGE_FLAG_STORAGE,
+        .flags     = GPU_IMAGE_FLAG_COLOR_ATTACHMENT | GPU_IMAGE_FLAG_SAMPLED,
         .format    = GPU_FORMAT_R16G16B16A16_SFLOAT,
         .width     = screen_width,
         .height    = screen_height,
-        .mip_count = 1
+        .mip_count = 1,
+        .ms_count  = 4
     };
     const GpuImageInfo screen_depth_info = {
         .flags     = GPU_IMAGE_FLAG_DEPTH_ATTACHMENT | GPU_IMAGE_FLAG_SAMPLED,
         .format    = GPU_FORMAT_D32_SFLOAT,
         .width     = screen_width,
         .height    = screen_height,
-        .mip_count = 1  
+        .mip_count = 1,
+        .ms_count  = 4
     };
 
     /* create new images */
@@ -101,8 +103,8 @@ b32 resize_screen_textures(void) {
 /* === meshes === */
 /* dynamically allocated using gpu_malloc and gpu_free
    no removing from registery */
-/* FIX: what if I add physics collision/ray casting? how my meshes will be traversed if they are not loaded ? */
-/* FIX: load only 1 node with 1 mesh with 1 primitive, ignore others */
+/* FIX: what if I add physics collision/ray casting? how my meshes will be traversed if they are not loaded ? 
+   FIX: load only 1 node with 1 mesh with 1 primitive, ignore others */
 
 typedef struct {
     u64 gpu_address;
@@ -231,6 +233,8 @@ b32 upload_mesh(u32 mesh_id) {
     u32           mesh_vertices_count = 0;
     u32           mesh_indices_count  = 0; 
 
+     const cgltf_primitive* scanning_primitive = NULL;
+
     /* parse model */ {
         const u64         gltf_nodes_count = model_data->nodes_count;
         const cgltf_node* gltf_nodes       = model_data->nodes;
@@ -239,23 +243,32 @@ b32 upload_mesh(u32 mesh_id) {
             if(gltf_nodes[i].mesh != NULL) {
                 const u64              primitives_count = gltf_nodes[i].mesh->primitives_count;
                 const cgltf_primitive* primitives       = gltf_nodes[i].mesh->primitives;
+                
                 for(u64 k = 0; k != primitives_count; k++) {
                     const u64              attributes_count = primitives[k].attributes_count;
                     const cgltf_attribute* attributes       = primitives[k].attributes;
 
-                    mesh_indices_count += (u32)primitives[k].indices->count;
-
                     for(u64 l = 0; l != attributes_count; l++) {
-                        if(attributes[l].type == cgltf_attribute_type_position && attributes[l].index == 0) {
-                            mesh_vertices_count += (u32)attributes[l].data->count;
-                            break;
+                        if(attributes[l].type == cgltf_attribute_type_position && attributes[l].data->count != 0 && attributes[l].index == 0) {
+                            scanning_primitive  =& primitives[k];
+                            mesh_indices_count  = (u32)primitives[k].indices->count;
+                            mesh_vertices_count = (u32)attributes[l].data->count;
+                            goto parsing_finished;
                         }
                     }
                 }
             }
         }
+
+        parsing_finished: {}
     }
 
+    if(scanning_primitive == NULL || mesh_indices_count == 0 || mesh_vertices_count == 0) {
+        LOG_ERROR("invalid gltf mesh: \"%s\"", name);
+        goto fail;
+    }
+
+    /* allocate mesh */
     const u64 alloc_size = mesh_vertices_count * sizeof(SimpleVertex) + mesh_indices_count * sizeof(u32);
     mesh_allocation = malloc(alloc_size);
     if(mesh_allocation == NULL) {
@@ -268,62 +281,49 @@ b32 upload_mesh(u32 mesh_id) {
     mesh_indices  = (void*)((u8*)mesh_allocation + mesh_vertices_count * sizeof(SimpleVertex));
 
     /* copy meshes */ {
-        const u64         gltf_nodes_count = model_data->nodes_count;
-        const cgltf_node* gltf_nodes       = model_data->nodes;
+        const u64              attributes_count = scanning_primitive->attributes_count;
+        const cgltf_attribute* attributes       = scanning_primitive->attributes;
+        
+        /* read indices */ {
+            const cgltf_accessor* indices       = scanning_primitive->indices;
+            const u32             indices_count = (u32)indices->count;
+            for(u32 i = 0; i != indices_count; i++) {
+                mesh_indices[i] = (u32)cgltf_accessor_read_index(indices, i);
+            }
+        }
+            
+        /* read vertices */ {
+            const cgltf_accessor* prim_positions = NULL;
+            const cgltf_accessor* prim_normals   = NULL;
+            u32 prim_positions_count = 0;
+            u32 prim_normals_count   = 0;
 
-        u32 vertices_i = 0;
-        u32 indices_i  = 0;
-
-        for(u64 i = 0; i != gltf_nodes_count; i++) {
-            if(gltf_nodes[i].mesh != NULL) {
-                const u64              primitives_count = gltf_nodes[i].mesh->primitives_count;
-                const cgltf_primitive* primitives       = gltf_nodes[i].mesh->primitives;
-
-                for(u64 k = 0; k != primitives_count; k++) {
-                    const u64              attributes_count = primitives[k].attributes_count;
-                    const cgltf_attribute* attributes       = primitives[k].attributes;
-                    
-                    /* read indices */
-                    const cgltf_accessor* prim_indices       = primitives[k].indices;
-                    const u32             prim_indices_count = (u32)prim_indices->count;
-                    for(u32 f = 0; f != prim_indices_count; f++, indices_i++) {
-                        mesh_indices[indices_i] = (u32)cgltf_accessor_read_index(prim_indices, f);
-                    }
-                    
-                    /* read vertices */
-                    const cgltf_accessor* prim_positions = NULL;
-                    const cgltf_accessor* prim_normals   = NULL;
-                    u32 prim_positions_count = 0;
-                    u32 prim_normals_count   = 0;
-
-                    for(u64 l = 0; l != attributes_count; l++) {
-                        if(attributes[l].type == cgltf_attribute_type_position && attributes[l].index == 0) {
-                            prim_positions       = attributes[l].data;
-                            prim_positions_count = (u32)attributes[l].data->count;
-                        }
-                        if(attributes[l].type == cgltf_attribute_type_normal && attributes[l].index == 0) {
-                            prim_normals       = attributes[l].data;
-                            prim_normals_count = (u32)attributes[l].data->count;
-                        }
-                    }
-
-                    for(u32 f = 0; f != prim_positions_count; f++, vertices_i++) {
-                        f32 position[3] = {0};
-                        f32 normal  [3] = {0};
-
-                        if(f < prim_positions_count) {
-                            cgltf_accessor_read_float(prim_positions, f, position, 3);
-                        }
-                        if(f < prim_normals_count) {
-                            cgltf_accessor_read_float(prim_normals, f, normal, 3);
-                        }
-
-                        mesh_vertices[vertices_i] = (SimpleVertex) {
-                            .position = {position[0], position[1], position[2], 1.0},
-                            .normal   = {normal  [0], normal  [1], normal  [2], 0.0}
-                        };
-                    }
+            for(u64 l = 0; l != attributes_count; l++) {
+                if(attributes[l].type == cgltf_attribute_type_position && attributes[l].index == 0) {
+                    prim_positions       = attributes[l].data;
+                    prim_positions_count = (u32)attributes[l].data->count;
                 }
+                if(attributes[l].type == cgltf_attribute_type_normal && attributes[l].index == 0) {
+                    prim_normals       = attributes[l].data;
+                    prim_normals_count = (u32)attributes[l].data->count;
+                }
+            }
+
+            for(u32 i = 0; i != prim_positions_count; i++) {
+                f32 position[3] = {0};
+                f32 normal  [3] = {0};
+
+                if(i < prim_positions_count) {
+                    cgltf_accessor_read_float(prim_positions, i, position, 3);
+                }
+                if(i < prim_normals_count) {
+                    cgltf_accessor_read_float(prim_normals, i, normal, 3);
+                }
+
+                mesh_vertices[i] = (SimpleVertex) {
+                    .position = {position[0], position[1], position[2], 1.0},
+                    .normal   = {normal  [0], normal  [1], normal  [2], 0.0}
+                };
             }
         }
     }
@@ -494,7 +494,7 @@ void upload_default_materials(void) {
         if(entity->is_updated) {
             entity->is_updated = FALSE;
             default_materials[i] = (DefaultMaterial) {
-                .matrix_m = mat4x4_translation(entity->position)
+                .matrix_m = mat4x4_mul_mat4x4(mat4x4_translation(entity->position), mat4x4_rotation(entity->rotation))
             };
 
             upload_offset_begin = MIN(i * sizeof(DefaultMaterial), upload_offset_begin);
@@ -610,8 +610,9 @@ b32 graphics_render_frame(Mat4x4 camera_vp, Mat4x4 camera_iv) {
     gpu_cmd_end_rendering(gpu_ctx);
 
     /* blit pass */
-    struct {u32 src_image_id; u32 sampler_id;} blit_push = {screen_color_handle, GPU_SAMPLER_LINEAR_CLAMP_ID};
+    struct {u32 src_image_id; u32 ms_count;} blit_push = {screen_color_handle, 4};
     gpu_cmd_sampled_barrier(gpu_ctx, screen_color_handle);
+    gpu_cmd_sampled_barrier(gpu_ctx, screen_depth_handle);
     gpu_cmd_targets_barrier(gpu_ctx, (GpuImageHandle[]){GPU_SURFACE_IMAGE_ID}, 1, GPU_INVALID_HANDLE, TRUE, FALSE);
     gpu_cmd_begin_rendering(gpu_ctx, screen_width, screen_height);
     gpu_cmd_push_constants(gpu_ctx, &blit_push, sizeof(blit_push));
@@ -665,7 +666,8 @@ b32 graphics_init(b32 is_debug) {
                 .vertex_shader       = "./out/data/demo_v.spv",
                 .fragment_shader     = "./out/data/demo_f.spv",
                 .color_formats_count = 1,
-                .color_formats       = (GpuFormat[]){GPU_FORMAT_R16G16B16A16_SFLOAT}
+                .color_formats       = (GpuFormat[]){GPU_FORMAT_R16G16B16A16_SFLOAT},
+                .ms_count            = 4  
             },
             [PIPELINE_BLIT_ID] = (GpuPipelineInfo) {
                 .flags               = 0,
@@ -680,7 +682,8 @@ b32 graphics_init(b32 is_debug) {
                 .fragment_shader     = "./out/data/axis_f.spv",
                 .color_formats_count = 1,
                 .color_formats       = (GpuFormat[]){GPU_FORMAT_R16G16B16A16_SFLOAT},
-                .depth_format        = GPU_FORMAT_D32_SFLOAT
+                .depth_format        = GPU_FORMAT_D32_SFLOAT,
+                .ms_count            = 4  
             },
             [PIPELINE_PLANET_ID] = (GpuPipelineInfo) {
                 .flags               = 0,
@@ -688,7 +691,8 @@ b32 graphics_init(b32 is_debug) {
                 .fragment_shader     = "./out/data/planet_f.spv",
                 .color_formats_count = 1,
                 .color_formats       = (GpuFormat[]){GPU_FORMAT_R16G16B16A16_SFLOAT},
-                .depth_format        = GPU_FORMAT_D32_SFLOAT        
+                .depth_format        = GPU_FORMAT_D32_SFLOAT,
+                .ms_count            = 4     
             },
             [PIPELINE_DEFAULT_ID] = (GpuPipelineInfo) {
                 .flags               = 0,
@@ -696,7 +700,8 @@ b32 graphics_init(b32 is_debug) {
                 .fragment_shader     = "./out/data/default_f.spv",
                 .color_formats_count = 1,
                 .color_formats       = (GpuFormat[]){GPU_FORMAT_R16G16B16A16_SFLOAT},
-                .depth_format        = GPU_FORMAT_D32_SFLOAT  
+                .depth_format        = GPU_FORMAT_D32_SFLOAT,
+                .ms_count            = 4
             }
         };
 
