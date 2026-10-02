@@ -91,13 +91,13 @@ Vec4 vec4_div_f32(Vec4 a, f32 b) {
 }
 
 f32 vec2_dot(Vec2 a, Vec2 b) {
-    return a.x * a.x + a.y * a.y;
+    return a.x * b.x + a.y * b.y;
 }
 f32 vec3_dot(Vec3 a, Vec3 b) {
-    return a.x * a.x + a.y * a.y + a.z * a.z;
+    return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 f32 vec4_dot(Vec4 a, Vec4 b) {
-    return a.x * a.x + a.y * a.y + a.z * a.z + a.w * a.w;
+    return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
 }
 
 f32 vec2_len(Vec2 a) {
@@ -233,7 +233,7 @@ Mat4x4 mat4x4_projection(f32 fov, f32 aspect, f32 near, f32 far) {
 
     return (Mat4x4) {
         .raw = {
-             f / aspect, 0.0f,  0.0f,                         0.0f,
+             f / aspect, 0.0f,  0.0f,                        0.0f,
              0.0f,      -f,    0.0f,                         0.0f,
              0.0f,       0.0f, near / (near - far),          (near * far) / (far - near),
              0.0f,       0.0f, 1.0f,                         0.0f
@@ -457,4 +457,20 @@ Vec4 mat4x4_mul_vec4(Mat4x4 a, Vec4 b) {
         a.m20 * b.x + a.m21 * b.y + a.m22 * b.z + a.m23 * b.w,
         a.m30 * b.x + a.m31 * b.y + a.m32 * b.z + a.m33 * b.w
     };
+}
+
+/* === primitives === */
+
+Vec4 mat4x4_transform_plane(Mat4x4 a, Vec4 plane) {
+    Vec4 unnormalized = mat4x4_mul_vec4(mat4x4_transpose(mat4x4_inverse(a)), plane);
+    f32 len = vec3_len((Vec3){unnormalized.x, unnormalized.y, unnormalized.z});
+    if (len < EPSILON) { 
+        return (Vec4){0};
+    } else {
+        return vec4_div_f32(unnormalized, len);
+    }
+}
+
+f32 signed_distance_from_plane(Vec4 plane, Vec3 point) {
+    return vec4_dot(plane, (Vec4){point.x, point.y, point.z, 1.0});
 }

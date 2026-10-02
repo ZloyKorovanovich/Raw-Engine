@@ -22,7 +22,7 @@
 #define GPU_VERTEX_SHADER_ENTRY "vs_main"
 #define GPU_FRAGMENT_SHADER_ENTRY "fs_main"
 #define GPU_COMPUTE_SHADER_ENTRY "cs_main"
-#define GPU_INVALID_ADDRESS (U64_MAX)
+#define GPU_INVALID_ADDRESS (0llu)
 
 #define GPU_INVALID_HANDLE (0xFFFFFFFF)
 #define GPU_SURFACE_IMAGE_ID (0xFFFFFFFE)
@@ -39,7 +39,9 @@ typedef enum {
 } GpuResult;
 
 typedef enum {
-    GPU_PIPELINE_FLAG_COMPUTE         = 0x1
+    GPU_PIPELINE_FLAG_COMPUTE    = 0x1,
+    GPU_PIPELINE_FLAG_CULL_FRONT = 0x2,
+    GPU_PIPELINE_FLAG_CULL_BACK  = 0x4
 } GpuPipelineFlags;
 
 typedef enum {
@@ -66,6 +68,7 @@ typedef enum {
     GPU_FORMAT_NONE,
     GPU_FORMAT_R32G32B32A32_SFLOAT,
     GPU_FORMAT_R16G16B16A16_SFLOAT,
+    GPU_FORMAT_R8G8B8A8_UNORM,
     GPU_FORMAT_D32_SFLOAT,
     GPU_FORMAT_SURFACE,
     GPU_FORMAT_COUNT
@@ -118,7 +121,7 @@ void        gpu_terminate(GpuContext* context);
 b32 gpu_compile_pipelines(GpuContext* context, const GpuPipelineInfo* pipeline_infos, u32 pipelines_count);
 
 u64  gpu_malloc(GpuContext* context, u64 size, u64 alignment);
-void gpu_free(GpuContext* context, u64 address, u64 size);
+b32  gpu_free(GpuContext* context, u64 address, u64 size);
 GpuImageHandle gpu_add_image(GpuContext* context, const GpuImageInfo* image_info);
 void           gpu_remove_image(GpuContext* context, GpuImageHandle image_id);
 
@@ -136,6 +139,8 @@ void gpu_cmd_begin_rendering(GpuContext* context, u32 width, u32 height);
 void gpu_cmd_end_rendering(GpuContext* context);
 
 void gpu_cmd_sync_memwrite(GpuContext* context, const void* data, u64 size, u64 address);
+void gpu_cmd_sync_imagewrite(GpuContext* context, const void* data, u64 size, GpuImageHandle image_handle);
+void gpu_cmd_generate_mip_maps(GpuContext* context, GpuImageHandle image_handle);
 void gpu_cmd_bind_pipeline(GpuContext* context, GpuPipelineHandle pipeline_id);
 void gpu_cmd_push_constants(GpuContext* context, const void* data, u32 size);
 void gpu_cmd_draw(GpuContext* context, u32 vertices, u32 instances);

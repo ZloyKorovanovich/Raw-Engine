@@ -2,24 +2,43 @@
 #define _GAME_STRUCTS_INCLUDED
 
 #include "game.h"
+#include "../math/math.h"
+#include "../resources/resources.h"
+#include "../input/input.h"
+
+#define INVALID_ENTITY_ID (0)
+
+typedef enum {
+    ENTITY_TYPE_STATIC = 0,
+    ENTITY_TYPE_SHARK  = 1
+} EntityType;
 
 typedef struct {
-    char name     [PATH_LENGTH];
-    char mesh_name[PATH_LENGTH];
-    u64  entity_id;
-    b32  is_updated;
-    f32  scale;
-    Vec3 position;
-    Vec4 rotation;
+    /* id */
+    u64        entity_id;
+    char       name[PATH_LENGTH];
+    b32        is_updated;
+    EntityType type;
+    /* transform */
+    f32        scale;
+    Vec3       position;
+    Vec4       rotation;
 } Entity;
 
-b32 graphics_init(b32 is_debug);
-void graphics_terminate(void);
-b32 graphics_render_frame(Mat4x4 camera_vp, Mat4x4 camera_iv);
-/* default materials */
-b32 graphics_default_materials_add(Entity* entity);
-void graphics_default_materials_remove(Entity* entity);
-void graphics_default_materials_clear(void);
-void render_default_materials(void);
+typedef struct {
+    Entity* entity;
+    u64     entity_id;
+} EntityReference;
+
+/* graphics */
+b32  graphics_render_frame(Mat4x4 camera_vp, Mat4x4 camera_iv);
+b32  graphics_opaque_lit_assign(Entity* entity, MeshHandle mesh, TextureHandle texture);
+void graphics_opaque_lit_withdraw(Entity* entity);
+
+/* game */
+Entity* entity_create(const char* name);
+void    entity_destroy(Entity* entity);
+b32     engine_init(b32 is_debug);
+void    engine_terminate(void);
 
 #endif

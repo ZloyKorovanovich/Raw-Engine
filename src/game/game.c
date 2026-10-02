@@ -1,6 +1,10 @@
 #include "game.h"
 #include "game_structs.h"
-#include "../input/input.h"
+
+typedef struct {
+    Vec3 origin;
+    Vec3 direction;
+} Ray;
 
 /* === global === */
 
@@ -74,95 +78,68 @@ void update_camera(void) {
     camera_iv = mat4x4_mul_mat4x4(camera_iv, mat4x4_translation(camera_pos));
     camera_iv = mat4x4_mul_mat4x4(camera_iv, mat4x4_rotation(camera_rot));
     camera_vp = mat4x4_inverse(camera_iv);
-    camera_vp = mat4x4_mul_mat4x4(mat4x4_projection(80.0f * (f32)DEG_2_RAD, 16.0f / 9.0f, 0.03f, 3000.0f), camera_vp);
+    camera_vp = mat4x4_mul_mat4x4(mat4x4_projection(80.0f * (f32)DEG_2_RAD, (f32)input.screen_x / (f32)input.screen_y, 0.03f, 3000.0f), camera_vp);
 }
 
-/* === entity pool === */
-
-#define INVALID_ENTITY_ID (0llu)
-
-static u64 global_entity_id = 1;
-
-static u32     entity_pool_free_slots_count = 0;
-static u32     entity_pool_capacity         = 0;
-static u32*    entity_pool_free_slots       = NULL;
-static Entity* entity_pool                  = NULL;
-
-/* just zeroed entity with id set */
-Entity* entity_create(void) {
-    /* reallocate pool */
-    if(entity_pool_free_slots_count == 0) {
-        u32     new_capacity   = entity_pool_capacity + 1024;
-        u32     new_free_count = new_capacity - entity_pool_capacity;
-        u32*    new_free_slots = realloc(entity_pool_free_slots, new_capacity * sizeof(u32));
-        Entity* new_pool       = realloc(entity_pool, new_capacity * sizeof(Entity));
-
-        if(new_pool == NULL || new_free_slots == NULL) {
-            LOG_ERROR("failed to reallocate entity pool");
-            entity_pool_free_slots = new_free_slots == NULL ? entity_pool_free_slots : new_free_slots;
-            entity_pool            = new_pool       == NULL ? entity_pool            : new_pool;
-            goto fail;
-        }
-
-        for(u32 i = 0; i != new_free_count; i++) {
-            new_free_slots[i] = i + entity_pool_capacity;
-        }
-
-        entity_pool_free_slots_count = new_free_count;
-        entity_pool_free_slots       = new_free_slots;
-        entity_pool_capacity         = new_capacity;
-        entity_pool                  = new_pool;
-    }
-
-    u32     slot_id = entity_pool_free_slots[entity_pool_free_slots_count - 1];
-    Entity* entity  = &entity_pool[slot_id];
-    entity_pool_free_slots_count--;
+Ray screen_point_to_ray(Vec2 screen_pos) {
+    f32 pos_x = CLAMP(0.0f, 1.0f, screen_pos.x / (f32)input.screen_x) * 2.0f - 1.0f;
+    f32 pos_y = CLAMP(0.0f, 1.0f, screen_pos.y / (f32)input.screen_y) * 2.0f - 1.0f;
+    Vec4 position_cs_near = {pos_x, pos_y, 0.0, 1.0};
+    Vec4 position_cs_far  = {pos_x, pos_y, 1.0, 1.0};
     
-    *entity = (Entity) {
-        .entity_id = __atomic_fetch_add(&global_entity_id, 1, __ATOMIC_SEQ_CST)
+    Mat4x4 camera_ivp = mat4x4_inverse(camera_vp);
+
+    Vec4 near_nd = mat4x4_mul_vec4(camera_ivp, position_cs_near);
+    Vec4 far_nd  = mat4x4_mul_vec4(camera_ivp, position_cs_far);
+    Vec3 pos_ws_near = vec3_div_f32((Vec3){near_nd.x, near_nd.y, near_nd.z}, near_nd.w);
+    Vec3 pos_ws_far  = vec3_div_f32((Vec3){far_nd.x, far_nd.y, far_nd.z}, far_nd.w);
+
+    return (Ray) {
+        pos_ws_near,
+        vec3_normalize(vec3_sub(pos_ws_far, pos_ws_near))
     };
-
-    return entity;
-
-    fail: {
-        return NULL;
-    }
 }
 
-void entity_destroy(Entity* entity) {
-    u32 entity_index = (u32)(((u64)entity - (u64)entity_pool) / sizeof(Entity));
-    if(entity_index >= entity_pool_capacity) {
-        LOG_ERROR("trying to destroy entity that does not belong to pool");
-        goto fail;
+b32 ray_intersect_sphere(Ray ray, Vec3 sphere_origin, f32 sphere_radius, Vec3* hit_point) {
+    Vec3 o = ray.origin;
+    Vec3 d = ray.direction;
+    Vec3 p = sphere_origin;
+    f32  r = sphere_radius;
+
+    f32  t = vec3_dot(vec3_sub(p, o), d);
+    Vec3 m = vec3_add(o, vec3_mul_f32(d, t));
+    f32  y = vec3_len(vec3_sub(m, p));
+
+    if(y < r) {
+        if(hit_point != NULL) {
+            f32 x  = sqrtf(r*r - y*y);
+            f32 t0 = t-x;
+            f32 t1 = t+x;
+
+            if(t1 > 0.0) {
+                *hit_point = vec3_add(o, vec3_mul_f32(d, t0));
+            } else {
+                *hit_point = vec3_add(o, vec3_mul_f32(d, t1));
+            }
+        }
+        return TRUE;
+    } else {
+        if(hit_point != NULL) {
+            *hit_point = (Vec3){0};
+        }
+        return FALSE;
     }
-    if(entity_pool[entity_index].entity_id == INVALID_ENTITY_ID) {
-        LOG_ERROR("trying to destroy entity that is already free");
-        goto fail;
-    }
-
-    entity_pool[entity_index] = (Entity){0};
-    entity_pool_free_slots[entity_pool_free_slots_count] = entity_index;
-    entity_pool_free_slots_count++;
-
-    fail: {}
 }
-
-void entity_pool_free(void) {
-    free(entity_pool_free_slots);
-    free(entity_pool);
-    entity_pool_free_slots_count = 0;
-    entity_pool_capacity         = 0;
-    entity_pool_free_slots       = NULL;
-    entity_pool                  = NULL;
-}
-
 
 b32 start(void) {
     for(u32 i = 0; i != 10; i++) {
         char number[32] = {0};
+        char name[PATH_LENGTH] = {0};
         sprintf_s(number, 32, "%u", i);
+        strcpy_s(name, PATH_LENGTH, "bull_shark_");
+        strcat_s(name, PATH_LENGTH, number);
 
-        Entity* new_entity = entity_create();
+        Entity* new_entity = entity_create(name);
         if(new_entity == NULL) {
             LOG_ERROR("failed to create entity");
             goto fail;
@@ -171,16 +148,10 @@ b32 start(void) {
         f32 angle = (f32)rand() / (f32)RAND_MAX * 2.0f * (f32)PI; // [0, 2π)
         f32 half  = angle * 0.5f;
 
-        strcpy_s(new_entity->name, PATH_LENGTH, "bull_shark_");
-        strcat_s(new_entity->name, PATH_LENGTH, number);
-        strcat_s(new_entity->mesh_name, PATH_LENGTH, "./out/data/models/bull_shark.glb");
         new_entity->position = (Vec3){(f32)(rand() % 10), (f32)(rand() % 10), (f32)(rand() % 10)};
         new_entity->rotation = (Vec4){ 0.0f, sinf(half), 0.0f, cosf(half) };
         new_entity->scale    = 1.0;
-
-        graphics_default_materials_add(new_entity);
-
-        LOG_MESSAGE("added entity id: %llu name: \"%s\"", new_entity->entity_id, new_entity->name);
+        graphics_opaque_lit_assign(new_entity, mesh_register("./out/data/models/bull_shark.glb"), texture_register("./out/data/textures/demo.png"));
     }
 
     return TRUE;
@@ -190,12 +161,8 @@ b32 start(void) {
     }
 }
 
-/* ==== ==== ==== ==== ==== ==== ==== ==== ==== 
-    game core
-   ==== ==== ==== ==== ==== ==== ==== ==== ==== */
-
 b32 game_run(b32 is_debug) {
-    if(!graphics_init(is_debug)) {
+    if(!engine_init(is_debug)) {
         LOG_ERROR("init failed");
         goto fail;
     }
@@ -217,9 +184,8 @@ b32 game_run(b32 is_debug) {
             goto fail;
         }
     }
-
-    /* finish */
-    entity_pool_free();
+    
+    engine_terminate();
 
     return TRUE;
 

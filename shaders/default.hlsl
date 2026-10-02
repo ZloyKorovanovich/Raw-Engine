@@ -8,6 +8,7 @@ struct PushConstants {
     uint64_t uniform_address;
     uint64_t transform_address;
     uint64_t mesh_address;
+    uint     image_id;
     uint     vertices_count;
     uint     indices_count;
 };
@@ -26,6 +27,7 @@ static float2 quad_positions[] = {
 struct Interpolators {
     float4 position_cs : SV_Position;
     float4 normal_ws   : Texcoord0;
+    float4 uv          : Texcoord1;
 };
 
 Interpolators vs_main(uint vertex_id : SV_VertexId) {
@@ -44,12 +46,13 @@ Interpolators vs_main(uint vertex_id : SV_VertexId) {
     Interpolators output = (Interpolators)0;
     output.position_cs = mul(uniform_buffer.Get().camera_vp, float4(position_ws, 1.0));
     output.normal_ws   = float4(normal_ws, 1.0);
-
+    output.uv          = float4(vertex.Get().uv.xy, 0.0, 0.0);
     return output;
 }
 
 float4 fs_main(Interpolators input) : SV_Target0 {
     vk::BufferPointer<UniformBuffer> uniform_buffer = vk::BufferPointer<UniformBuffer>(push_constants.uniform_address);
+    float4 color = sampled_images[push_constants.image_id].Sample(samplers[0], input.uv.xy);
     float3 normal_ws = normalize(input.normal_ws.xyz);
-    return float4(0.0, 1.0, 1.0, 1.0) * (1.0 + dot(normal_ws, uniform_buffer.Get().sun_dir.xyz)) * 0.5;
+    return color * (1.0 + dot(normal_ws, uniform_buffer.Get().sun_dir.xyz)) * 0.5;
 }

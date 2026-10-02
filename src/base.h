@@ -54,4 +54,36 @@ typedef double             f64;
 #define ALIGN_DOWN(p, a) (((u64)p) & ~((u64)a - 1))
 #define IS_ALIGNED(p, a) (!((u64)p & ((u64)a - 1)))
 
+#define EXPORT __declspec(dllexport)
+
+typedef struct {
+    u32   element_size;
+    u32   capacity;
+    u32   free_count;
+    u32   growth;
+    void* pool;
+    u32*  free_slots;
+} Pool;
+
+b32 pool_create(Pool* pool, u32 element_size, u32 growth, u32 capacity);
+void* pool_add(Pool* pool);
+u32 pool_add_id(Pool* pool);
+void pool_remove(Pool* pool, void* element);
+void pool_remove_id(Pool* pool, u32 id);
+void pool_destroy(Pool* pool);
+
+typedef struct {
+    u32   element_size;
+    u32   capacity;
+    u32   count;
+    u32   growth;
+    void* array;
+} Array;
+
+b32 array_create(Array* array, u32 element_size, u32 growth, u32 capacity);
+void* array_add(Array* array);
+void array_remove(Array* array, void* element);
+void array_remove_id(Array* array, u32 id);
+void array_destroy(Array* array);
+
 #endif

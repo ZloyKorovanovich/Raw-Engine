@@ -11,6 +11,8 @@ typedef struct {
 
     f32 movement_vertical;   /* WS */
     f32 movement_horizontal; /* AD */
+    u32 screen_x;
+    u32 screen_y;
 
     b32 boost; /* shift */
     b32 action_0; /* lmb */
@@ -20,7 +22,7 @@ typedef struct {
     f64 delta;
 } Input;
 
-b32 input_hook_window(void* glfw_window);
+void input_hook_window(void* glfw_window);
 b32 input_process_window_should_close(void);
 void input_gather_input(Input* input);
 void input_use_cursor(b32 state);

@@ -3,8 +3,8 @@
 
 /* non-aliased descriptors */
 
-[[vk::binding(0, 0)]] SamplerState samplers      [SAMPLERS_COUNT  ];
-[[vk::binding(1, 0)]] Texture2D    sampled_images[MAX_IMAGES_COUNT];
+[[vk::binding(0, 0)]] SamplerState        samplers               [SAMPLERS_COUNT  ];
+[[vk::binding(1, 0)]] Texture2D           sampled_images         [MAX_IMAGES_COUNT];
 [[vk::binding(1, 0)]] Texture2DMS<float4> sampled_images_float_ms[MAX_IMAGES_COUNT];
 
 /* alised descriptor arrays for storage images */
@@ -18,6 +18,7 @@
 struct UniformBuffer {
     float4x4 camera_vp;
     float4x4 camera_iv;
+    float4   screen_params;
     float4   sun_dir;
     float4   sun_color;
 };
@@ -25,4 +26,5 @@ struct UniformBuffer {
 struct Vertex {
     float4 position;
     float4 normal;
+    float4 uv;
 };

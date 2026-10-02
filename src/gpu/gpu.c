@@ -14,6 +14,7 @@ const GpuFormatConversion gpu_format_conversion_table[GPU_FORMAT_COUNT] = {
     [GPU_FORMAT_NONE               ] = {VK_FORMAT_UNDEFINED          , VK_IMAGE_ASPECT_NONE     },
     [GPU_FORMAT_R32G32B32A32_SFLOAT] = {VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT},
     [GPU_FORMAT_R16G16B16A16_SFLOAT] = {VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_ASPECT_COLOR_BIT},
+    [GPU_FORMAT_R8G8B8A8_UNORM     ] = {VK_FORMAT_R8G8B8A8_UNORM     , VK_IMAGE_ASPECT_COLOR_BIT},
     [GPU_FORMAT_D32_SFLOAT         ] = {VK_FORMAT_D32_SFLOAT         , VK_IMAGE_ASPECT_DEPTH_BIT},
     [GPU_FORMAT_SURFACE            ] = {VK_FORMAT_UNDEFINED          , VK_IMAGE_ASPECT_NONE     }
 };
@@ -46,7 +47,7 @@ VkFormat gpu_convert_format(VkFormat surface_format, GpuFormat format, VkImageAs
 }
 
 VkImageUsageFlags gpu_convert_image_usage(GpuImageFlags image_flags) {
-    VkImageUsageFlags usage = 0;
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
     if(image_flags & GPU_IMAGE_FLAG_COLOR_ATTACHMENT) {
         usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -1015,7 +1016,7 @@ b32 create_memory_pools(u64 malloc_heap_size, u64 images_heap_size, const GpuVul
         const u64 alignment_transfer_images = MAX(alignment_images, alignment_transfer);
         const u64 alignment_transfer_malloc = MAX(alignment_malloc, alignment_transfer);
 
-        if(!(flags_images & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)) {
+        /* image transfer buffer (always used) */ {
             use_transfer_images    = TRUE;
             transfer_images_offset = ALIGN(transfer_heap_size, alignment_transfer_images);
             transfer_heap_size     = ALIGN(transfer_images_offset + images_heap_size, alignment_transfer_images);
@@ -1793,7 +1794,6 @@ void destroy_sync_objects(const GpuVulkanDevice* vulkan_device, GpuSyncObjects* 
 }
 
 /* === pipelines === */
-/* FIX: move stuff like culling into dynamic state */
 
 b32 compile_shader_module(VkDevice device, const char* name, VkShaderModule* shader_module, void** read_buffer, u64* read_buffer_size) {
     FILE* file = fopen(name, "rb");
@@ -1914,6 +1914,14 @@ b32 create_graphics_pipeline(
     u32              ms_count,
     GpuPipeline*     gpu_pipeline
 ) {
+    VkCullModeFlags cull_mode = VK_CULL_MODE_NONE;
+    if(flags & GPU_PIPELINE_FLAG_CULL_FRONT) {
+        cull_mode |= VK_CULL_MODE_FRONT_BIT;
+    }
+    if(flags & GPU_PIPELINE_FLAG_CULL_BACK) {
+        cull_mode |= VK_CULL_MODE_BACK_BIT;
+    }
+
     /* create pipeline */
     const VkPipelineShaderStageCreateInfo shader_stages[2] = {
         (VkPipelineShaderStageCreateInfo) {
@@ -1973,8 +1981,8 @@ b32 create_graphics_pipeline(
         .rasterizerDiscardEnable = FALSE,
         .polygonMode             = VK_POLYGON_MODE_FILL,
         .lineWidth               = 1.0f,
-        .cullMode                = VK_CULL_MODE_NONE,
-        .frontFace               = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .cullMode                = cull_mode,
+        .frontFace               = VK_FRONT_FACE_CLOCKWISE,
         .depthBiasEnable         = FALSE,
         .depthBiasConstantFactor = 0.0,
         .depthBiasClamp          = 0.0,
@@ -2404,11 +2412,15 @@ u64 gpu_malloc(GpuContext* context, u64 size, u64 alignment) {
     return buffer_address + offset;
 
     fail: {
-        return U64_MAX;
+        return GPU_INVALID_ADDRESS;
     }
 }
 
-void gpu_free(GpuContext* context, u64 address, u64 size) {
+b32 gpu_free(GpuContext* context, u64 address, u64 size) {
+    if(address == GPU_INVALID_ADDRESS) {
+        return TRUE;
+    }
+
     GpuMemoryPools* memory_pools = &context->memory_pools;
 
     u64  buffer_address     = memory_pools->malloc_buffer_address;
@@ -2419,6 +2431,13 @@ void gpu_free(GpuContext* context, u64 address, u64 size) {
 
     if(!free_memory_allocator(pages_malloc_bits, pages_malloc_count, offset, size)) {
         LOG_ERROR("failed to free gpu malloc memory");
+        goto fail;
+    }
+
+    return TRUE;
+
+    fail: {
+        return FALSE;
     }
 }
 
@@ -2655,9 +2674,6 @@ void gpu_remove_image(GpuContext* context, GpuImageHandle image_id) {
 /* ==== ==== ==== ==== ==== ==== ==== ==== ==== 
     commands
    ==== ==== ==== ==== ==== ==== ==== ==== ==== */
-/* FIX: add u64 overflow checks on memory barrier 
-   FIX: add u64 overflow checks sync memwrite
-   FIX: might need to change memory barrier to handle multiple allocations */
 
 void gpu_transit_image(VkCommandBuffer command_buffer, GpuImage* gpu_image, VkImageLayout dst_layout, VkAccessFlags dst_access, VkPipelineStageFlags dst_stage) {
     const u32                  mip_count    = gpu_image->mip_count;
@@ -3033,9 +3049,10 @@ void gpu_cmd_memory_barrier(GpuContext* context, u64 address, u64 size) {
     u64      malloc_buffer_address = context->memory_pools.malloc_buffer_address;
     u64      malloc_heap_size      = context->memory_pools.size_malloc;
 
-    if( size == 0 ||
+    if( size == 0                       ||
         address < malloc_buffer_address || 
-        size > malloc_heap_size
+        size    > malloc_heap_size      ||
+        address + size < address
     ) {
         LOG_ERROR("invalid memory barrier");
         goto fail;
@@ -3255,7 +3272,7 @@ void gpu_cmd_end_rendering(GpuContext* context) {
     vulkan_device->cmd_end_rendering_khr(command_buffer);
 }
 
-
+/* barrier is embeded */
 void gpu_cmd_sync_memwrite(GpuContext* context, const void* data, u64 size, u64 address) {
     GpuMemoryPools* memory_pools   = &context->memory_pools;
     VkCommandBuffer command_buffer = context->vulkan_device.command_buffer_render;
@@ -3274,7 +3291,11 @@ void gpu_cmd_sync_memwrite(GpuContext* context, const void* data, u64 size, u64 
     const VkMemoryPropertyFlags malloc_heap_flags   = memory_pools->flags_malloc;
     const VkDeviceMemory        malloc_heap_memory  = memory_pools->memory_malloc;
 
-    if(address + size > malloc_heap_address + malloc_heap_size || address < malloc_heap_address) {
+    if( address + size > malloc_heap_address + malloc_heap_size || 
+        address < malloc_heap_address ||
+        address + size < address ||
+        (u64)data + size < (u64)data
+    ) {
         LOG_ERROR("invalid address or size");
         goto fail;
     }
@@ -3313,8 +3334,133 @@ void gpu_cmd_sync_memwrite(GpuContext* context, const void* data, u64 size, u64 
             .size      = size
         };
         vkCmdCopyBuffer(command_buffer, transfer_malloc_buffer, malloc_buffer, 1, &buffer_copy);
+        gpu_cmd_memory_barrier(context, address, size);
     }
 
+    fail: {}
+}
+
+void gpu_cmd_sync_imagewrite(GpuContext* context, const void* data, u64 size, GpuImageHandle image_handle) {
+    GpuMemoryPools* memory_pools   = &context->memory_pools;
+    GpuImagesPool*  images_pool    = &context->images_pool;
+    VkCommandBuffer command_buffer = context->vulkan_device.command_buffer_render;
+    VkDevice        device         = context->vulkan_device.device;
+
+    void*                       transfer_map           = memory_pools->map_transfer;
+    const VkBuffer              transfer_image_buffer  = memory_pools->buffer_transfer_images;
+    const VkMemoryPropertyFlags transfer_heap_flags    = memory_pools->flags_transfer;
+    const u64                   transfer_images_offset = memory_pools->offset_transfer_images;
+    const VkDeviceMemory        transfer_heap_memory   = memory_pools->memory_transfer;
+
+    u32       images_count = images_pool->images_count;
+    GpuImage* images       = images_pool->images;
+
+    if(transfer_map == NULL) {
+        LOG_ERROR("transfer map is null");
+        goto fail;
+    }
+    if(image_handle >= images_count) {
+        LOG_ERROR("invalid image handle");
+        goto fail;
+    }
+
+    if(size > images[image_handle].memory_size) {
+        LOG_ERROR("invalid image size");
+        goto fail;
+    }
+
+    gpu_transit_image(command_buffer, &images[image_handle], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+    const VkImage            image        = images[image_handle].image;
+    const VkImageLayout      image_layout = images[image_handle].layout;
+    const VkImageAspectFlags image_aspect = images[image_handle].aspect;
+    const u64                image_offset = images[image_handle].memory_offset;
+    const u32                image_width  = images[image_handle].width;
+    const u32                image_height = images[image_handle].height;
+
+    /* write image to host buffer */ {
+        memcpy((u8*)transfer_map + transfer_images_offset + image_offset, data, size);
+        if(!(transfer_heap_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            const VkMappedMemoryRange memory_range = {
+                .sType  = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                .memory = transfer_heap_memory,
+                .offset = ALIGN_DOWN(transfer_images_offset + image_offset, 256),
+                .size   = ALIGN(size, 256)
+            };
+            if(vkFlushMappedMemoryRanges(device, 1, &memory_range) != VK_SUCCESS) {
+                LOG_ERROR("failed to flush images transfer memory");
+                goto fail;
+            }
+        }
+    }
+    
+    /* copy image to gpu */ {
+        const VkBufferImageCopy buffer_copy = {
+            .bufferOffset = transfer_images_offset + image_offset,
+            .imageExtent  = (VkExtent3D) {
+                .width  = image_width,
+                .height = image_height,
+                .depth  = 1
+            },
+            .imageSubresource = (VkImageSubresourceLayers) {
+                .aspectMask     = image_aspect,
+                .baseArrayLayer = 0,
+                .layerCount     = 1,
+                .mipLevel       = 0
+            }
+        };
+        vkCmdCopyBufferToImage(command_buffer, transfer_image_buffer, image, image_layout, 1, &buffer_copy);
+    }
+
+    fail: {}
+}
+
+/* barrier is embeded */
+void gpu_cmd_generate_mip_maps(GpuContext* context, GpuImageHandle image_handle) {
+    VkCommandBuffer command_buffer = context->vulkan_device.command_buffer_render;
+    GpuImagesPool*  images_pool    = &context->images_pool;
+    GpuImage*       gpu_images     = images_pool->images;
+
+    if(image_handle >= images_pool->images_max_count) {
+        LOG_ERROR("invalid image handle");
+        goto fail;
+    }
+
+    GpuImage* gpu_image = &gpu_images[image_handle];
+
+    VkImageAspectFlags aspect     = gpu_image->aspect;
+    u32                mips_count = gpu_image->mip_count;
+    u32                width      = gpu_image->width;
+    u32                height     = gpu_image->height;
+
+    for(u32 i = 1; i != mips_count; i++) {
+        const VkImageBlit image_blit = {
+            .srcSubresource = {
+                .aspectMask = aspect, 
+                .mipLevel   = i - 1, 
+                .layerCount = 1
+            },
+            .dstSubresource = {
+                .aspectMask = aspect,
+                .mipLevel   = i,
+                .layerCount = 1
+            },
+            .srcOffsets = {
+                (VkOffset3D){0},
+                (VkOffset3D){(i32)width, (i32)height, 1}
+            },
+            .dstOffsets = {
+                (VkOffset3D){0},
+                (VkOffset3D){(i32)width > 1 ? (i32)width / 2 : 1, (i32)height > 1 ? (i32)height / 2 : 1, 1}
+            }
+        };
+
+        gpu_transit_image(command_buffer, gpu_image, VK_IMAGE_LAYOUT_GENERAL, VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        vkCmdBlitImage(command_buffer, gpu_image->image, VK_IMAGE_LAYOUT_GENERAL, gpu_image->image, VK_IMAGE_LAYOUT_GENERAL, 1, &image_blit, VK_FILTER_LINEAR);
+
+        width  = width  > 1 ? width  / 2 : 1;
+        height = height > 1 ? height / 2 : 1;
+    }
     fail: {}
 }
 

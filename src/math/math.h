@@ -89,4 +89,8 @@ Mat4x4 mat4x4_inverse(Mat4x4 a);
 Mat4x4 mat4x4_mul_mat4x4(Mat4x4 a, Mat4x4 b);
 Vec4   mat4x4_mul_vec4(Mat4x4 a, Vec4 b);
 
+/* primitives */
+Vec4 mat4x4_transform_plane(Mat4x4 a, Vec4 plane);
+f32 signed_distance_from_plane(Vec4 plane, Vec3 point);
+
 #endif

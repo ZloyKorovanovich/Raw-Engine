@@ -6,10 +6,9 @@ static f64 mouse_x = 0.0;
 static f64 mouse_y = 0.0;
 static f64 time    = 0.0;
 
-b32 input_hook_window(void* glfw_window) {
+void input_hook_window(void* glfw_window) {
     window = glfw_window;
     glfwSetTime(0.0);
-    return TRUE;
 }
 
 b32 input_process_window_should_close(void) {
@@ -66,6 +65,8 @@ void input_gather_input(Input* input) {
         .mouse_delta_y       = (f32)mouse_delta_y,
         .movement_vertical   = (f32)vertical_axis,
         .movement_horizontal = (f32)horizontal_axis,
+        .screen_x            = (u32)screen_width,
+        .screen_y            = (u32)screen_height,
         .boost               = boost,
         .action_0            = action_0,
         .action_1            = action_1,
